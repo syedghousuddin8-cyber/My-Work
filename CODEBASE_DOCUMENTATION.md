@@ -1801,7 +1801,6 @@ supervisorctl status foodbank-worker:*
 
 **Technical Support:**
 - Documentation: https://docs.food-bank.xyz
-- Vendor: nullphpscript.com
 - Developer: iNiLabs
 
 **License:**
