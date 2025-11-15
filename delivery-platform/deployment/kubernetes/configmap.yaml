@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+  namespace: delivery-platform
+data:
+  # Database
+  postgres.host: "postgres.delivery-platform.svc.cluster.local"
+  postgres.port: "5432"
+  postgres.database: "delivery_platform"
+  postgres.user: "postgres"
+
+  # Redis
+  redis.url: "redis://redis.delivery-platform.svc.cluster.local:6379"
+
+  # MongoDB
+  mongodb.uri: "mongodb://mongodb.delivery-platform.svc.cluster.local:27017/delivery_platform"
+
+  # Kafka
+  kafka.brokers: "kafka-0.kafka-headless.delivery-platform.svc.cluster.local:9092,kafka-1.kafka-headless.delivery-platform.svc.cluster.local:9092,kafka-2.kafka-headless.delivery-platform.svc.cluster.local:9092"
+
+  # Elasticsearch
+  elasticsearch.url: "http://elasticsearch.delivery-platform.svc.cluster.local:9200"
+
+  # Service URLs
+  user.service.url: "http://user-service.delivery-platform.svc.cluster.local:3001"
+  order.service.url: "http://order-service.delivery-platform.svc.cluster.local:3002"
+  vendor.service.url: "http://vendor-service.delivery-platform.svc.cluster.local:3003"
+  driver.service.url: "http://driver-service.delivery-platform.svc.cluster.local:3004"
+  payment.service.url: "http://payment-service.delivery-platform.svc.cluster.local:3005"
+  tracking.service.url: "http://tracking-service.delivery-platform.svc.cluster.local:3006"
+  notification.service.url: "http://notification-service.delivery-platform.svc.cluster.local:3007"
+
+  # Platform settings
+  platform.fee.percent: "10"
+  currency: "usd"
+  jwt.expiry: "24h"

@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "QuickDeliver Customer",
+    "slug": "quickdeliver-customer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF6B35"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.quickdeliver.customer",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We need your location to show nearby restaurants and delivery tracking.",
+        "NSLocationAlwaysUsageDescription": "We need your location to deliver your orders."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF6B35"
+      },
+      "package": "com.quickdeliver.customer",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ],
+      "googleMapsApiKey": "YOUR_GOOGLE_MAPS_API_KEY"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-location",
+      "@react-native-google-signin/google-signin"
+    ]
+  }
+}
