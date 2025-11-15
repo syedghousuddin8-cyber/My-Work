@@ -1,0 +1,371 @@
+version: '3.8'
+
+services:
+  # Databases
+  postgres:
+    image: postgres:16-alpine
+    container_name: delivery-postgres
+    environment:
+      POSTGRES_USER: delivery
+      POSTGRES_PASSWORD: delivery_dev_pass
+      POSTGRES_DB: delivery_platform
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - delivery-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U delivery"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7.0
+    container_name: delivery-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: delivery
+      MONGO_INITDB_ROOT_PASSWORD: delivery_dev_pass
+      MONGO_INITDB_DATABASE: delivery_platform
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - delivery-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: delivery-redis
+    command: redis-server --requirepass delivery_dev_pass
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - delivery-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Message Brokers
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: delivery-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - delivery-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: delivery-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - delivery-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # Elasticsearch for Search
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: delivery-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - delivery-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Microservices
+  api-gateway:
+    build:
+      context: ./backend/api-gateway
+      dockerfile: Dockerfile
+    container_name: delivery-api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+    depends_on:
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/api-gateway:/app
+      - /app/node_modules
+    command: npm run dev
+
+  user-service:
+    build:
+      context: ./backend/services/user-service
+      dockerfile: Dockerfile
+    container_name: delivery-user-service
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/user-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  order-service:
+    build:
+      context: ./backend/services/order-service
+      dockerfile: Dockerfile
+    container_name: delivery-order-service
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/order-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  vendor-service:
+    build:
+      context: ./backend/services/vendor-service
+      dockerfile: Dockerfile
+    container_name: delivery-vendor-service
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      MONGODB_URL: mongodb://delivery:delivery_dev_pass@mongodb:27017/delivery_platform?authSource=admin
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+      - kafka
+      - elasticsearch
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/vendor-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  driver-service:
+    build:
+      context: ./backend/services/driver-service
+      dockerfile: Dockerfile
+    container_name: delivery-driver-service
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/driver-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  payment-service:
+    build:
+      context: ./backend/services/payment-service
+      dockerfile: Dockerfile
+    container_name: delivery-payment-service
+    ports:
+      - "3005:3005"
+    environment:
+      NODE_ENV: development
+      PORT: 3005
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+      STRIPE_SECRET_KEY: sk_test_your_stripe_key
+      STRIPE_PUBLISHABLE_KEY: pk_test_your_stripe_key
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/payment-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  notification-service:
+    build:
+      context: ./backend/services/notification-service
+      dockerfile: Dockerfile
+    container_name: delivery-notification-service
+    ports:
+      - "3006:3006"
+    environment:
+      NODE_ENV: development
+      PORT: 3006
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+      FCM_SERVER_KEY: your_firebase_server_key
+      TWILIO_ACCOUNT_SID: your_twilio_account_sid
+      TWILIO_AUTH_TOKEN: your_twilio_auth_token
+      TWILIO_PHONE_NUMBER: +1234567890
+      SENDGRID_API_KEY: your_sendgrid_api_key
+    depends_on:
+      - postgres
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/notification-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  tracking-service:
+    build:
+      context: ./backend/services/tracking-service
+      dockerfile: Dockerfile
+    container_name: delivery-tracking-service
+    ports:
+      - "3007:3007"
+    environment:
+      NODE_ENV: development
+      PORT: 3007
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      MONGODB_URL: mongodb://delivery:delivery_dev_pass@mongodb:27017/delivery_platform?authSource=admin
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/tracking-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  recommendation-service:
+    build:
+      context: ./backend/services/recommendation-service
+      dockerfile: Dockerfile
+    container_name: delivery-recommendation-service
+    ports:
+      - "3008:3008"
+    environment:
+      NODE_ENV: development
+      PORT: 3008
+      DATABASE_URL: postgresql://delivery:delivery_dev_pass@postgres:5432/delivery_platform
+      MONGODB_URL: mongodb://delivery:delivery_dev_pass@mongodb:27017/delivery_platform?authSource=admin
+      REDIS_URL: redis://:delivery_dev_pass@redis:6379
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      - postgres
+      - mongodb
+      - redis
+      - kafka
+    networks:
+      - delivery-network
+    volumes:
+      - ./backend/services/recommendation-service:/app
+      - /app/node_modules
+    command: npm run dev
+
+  # Admin Panel
+  admin-panel:
+    build:
+      context: ./web/admin-panel
+      dockerfile: Dockerfile
+    container_name: delivery-admin-panel
+    ports:
+      - "3100:3100"
+    environment:
+      NODE_ENV: development
+      PORT: 3100
+      REACT_APP_API_URL: http://localhost:3000
+    depends_on:
+      - api-gateway
+    networks:
+      - delivery-network
+    volumes:
+      - ./web/admin-panel:/app
+      - /app/node_modules
+    command: npm run dev
+
+networks:
+  delivery-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+  es_data:
