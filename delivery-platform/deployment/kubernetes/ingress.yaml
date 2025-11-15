@@ -62,6 +62,27 @@ spec:
             name: recommendation-service
             port:
               number: 8000
+      - path: /api/v1/pricing
+        pathType: Prefix
+        backend:
+          service:
+            name: pricing-service
+            port:
+              number: 3008
+      - path: /api/v1/routes
+        pathType: Prefix
+        backend:
+          service:
+            name: route-optimization-service
+            port:
+              number: 3009
+      - path: /api/v1/fraud
+        pathType: Prefix
+        backend:
+          service:
+            name: fraud-detection-service
+            port:
+              number: 3010
   - host: ws.delivery-platform.com
     http:
       paths:
