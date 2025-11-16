@@ -233,6 +233,18 @@ jobs:
           echo "✅ Backend deployment completed!"
           echo "========================================="
           pm2 list
+
+          echo ""
+          echo "========================================="
+          echo "Checking PM2 Logs for Errors..."
+          echo "========================================="
+          pm2 logs auth-server --lines 50 --nostream || true
+
+          echo ""
+          echo "========================================="
+          echo "Testing auth server directly on localhost:3001..."
+          echo "========================================="
+          curl -s http://localhost:3001/api/v1/auth/me || echo "Failed to connect to auth server"
           ENDSSH
 
       - name: ✅ Verify backend
