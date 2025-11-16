@@ -317,10 +317,10 @@ export default function SettingsPage() {
         <div className="flex justify-end">
           <button
             type="submit"
-            disabled={updateSettings.isLoading}
+            disabled={updateSettings.isPending}
             className="btn-primary flex items-center gap-2"
           >
-            {updateSettings.isLoading ? (
+            {updateSettings.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Saving...

@@ -203,7 +203,7 @@ export default function AnalyticsPage() {
                 fill="#8884d8"
                 dataKey="value"
               >
-                {(analytics?.orderStatusDistribution || []).map((entry: any, index: number) => (
+                {(analytics?.orderStatusDistribution || []).map((_entry: any, index: number) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
