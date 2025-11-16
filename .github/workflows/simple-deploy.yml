@@ -1,0 +1,193 @@
+name: Simple Deploy - Admin Panel
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type YES to deploy'
+        required: true
+        default: 'NO'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'YES'
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: |
+          cd delivery-platform/frontend/admin-dashboard
+          npm install
+
+      - name: 🏗️ Build admin panel
+        run: |
+          cd delivery-platform/frontend/admin-dashboard
+          cat > .env.production << 'EOF'
+          VITE_API_URL=http://52.66.71.133/api/v1
+          VITE_WS_URL=ws://52.66.71.133/ws
+          VITE_ENV=production
+          EOF
+          npm run build
+
+      - name: 📦 Create deployment package
+        run: |
+          cd delivery-platform/frontend/admin-dashboard/dist
+          tar -czf ${{ github.workspace }}/admin-panel.tar.gz .
+          echo "✅ Package created: $(ls -lh ${{ github.workspace }}/admin-panel.tar.gz)"
+
+      - name: 🔐 Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 52.66.71.133 >> ~/.ssh/known_hosts 2>/dev/null
+          echo "✅ SSH key configured"
+
+      - name: 🧪 Test SSH connection
+        run: |
+          echo "Testing SSH connection to server..."
+          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=10 ubuntu@52.66.71.133 "echo '✅ SSH connection successful' && hostname && uptime" || {
+            echo "❌ SSH connection failed!"
+            echo "Please verify:"
+            echo "1. SSH_PRIVATE_KEY secret is set correctly in GitHub"
+            echo "2. Server 52.66.71.133 is accessible"
+            echo "3. SSH key has correct permissions on server"
+            exit 1
+          }
+
+      - name: 📤 Upload files to server
+        run: |
+          echo "Uploading admin panel package..."
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            ${{ github.workspace }}/admin-panel.tar.gz \
+            ubuntu@52.66.71.133:/tmp/admin-panel.tar.gz
+
+          echo "Uploading nginx configuration..."
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            delivery-platform/deployment/production/nginx-admin.conf \
+            ubuntu@52.66.71.133:/tmp/nginx-admin.conf
+
+          echo "✅ Files uploaded successfully"
+
+      - name: 🚀 Deploy on server
+        run: |
+          ssh -i ~/.ssh/id_rsa ubuntu@52.66.71.133 << 'ENDSSH'
+          set -e
+
+          echo "========================================="
+          echo "Starting deployment..."
+          echo "========================================="
+
+          # Install nginx if needed
+          if ! command -v nginx &> /dev/null; then
+            echo "📦 Installing nginx..."
+            sudo apt-get update -qq
+            sudo apt-get install -y nginx
+            echo "✅ Nginx installed"
+          else
+            echo "✅ Nginx already installed"
+          fi
+
+          # Create directory structure
+          echo "📁 Creating directories..."
+          sudo mkdir -p /var/www/delivery-platform/admin-panel
+          sudo chown -R ubuntu:ubuntu /var/www/delivery-platform
+          echo "✅ Directories created"
+
+          # Backup existing deployment
+          if [ -d "/var/www/delivery-platform/admin-panel" ] && [ "$(ls -A /var/www/delivery-platform/admin-panel)" ]; then
+            echo "💾 Backing up current deployment..."
+            BACKUP_DIR="/var/www/delivery-platform/admin-panel.backup.$(date +%Y%m%d-%H%M%S)"
+            sudo cp -r /var/www/delivery-platform/admin-panel "$BACKUP_DIR"
+            echo "✅ Backup created at $BACKUP_DIR"
+          fi
+
+          # Extract new files
+          echo "📦 Extracting admin panel..."
+          cd /var/www/delivery-platform/admin-panel
+          rm -rf ./*
+          tar -xzf /tmp/admin-panel.tar.gz
+          echo "✅ Files extracted"
+
+          # Configure nginx
+          echo "⚙️ Configuring nginx..."
+          sudo cp /tmp/nginx-admin.conf /etc/nginx/sites-available/admin-panel
+          sudo ln -sf /etc/nginx/sites-available/admin-panel /etc/nginx/sites-enabled/admin-panel
+          sudo rm -f /etc/nginx/sites-enabled/default
+
+          # Test nginx configuration
+          echo "🧪 Testing nginx configuration..."
+          if sudo nginx -t; then
+            echo "✅ Nginx configuration is valid"
+          else
+            echo "❌ Nginx configuration has errors"
+            exit 1
+          fi
+
+          # Reload nginx
+          echo "🔄 Reloading nginx..."
+          sudo systemctl enable nginx
+          sudo systemctl reload nginx
+          echo "✅ Nginx reloaded"
+
+          # Cleanup
+          echo "🧹 Cleaning up..."
+          rm -f /tmp/admin-panel.tar.gz /tmp/nginx-admin.conf
+
+          echo "========================================="
+          echo "✅ Deployment completed successfully!"
+          echo "========================================="
+          ENDSSH
+
+      - name: ✅ Verify deployment
+        run: |
+          echo "Waiting for server to be ready..."
+          sleep 5
+
+          echo "Testing admin panel accessibility..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://52.66.71.133 || echo "000")
+
+          echo ""
+          echo "========================================="
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "304" ]; then
+            echo "✅ DEPLOYMENT SUCCESSFUL!"
+            echo "========================================="
+            echo ""
+            echo "🌐 Admin Panel is LIVE!"
+            echo "   URL: http://52.66.71.133"
+            echo ""
+            echo "🔐 Default Login:"
+            echo "   Email: admin@delivery-platform.com"
+            echo "   Password: admin123"
+            echo ""
+            echo "⚠️  IMPORTANT: Change the password immediately!"
+            echo ""
+          else
+            echo "⚠️  DEPLOYMENT COMPLETED WITH WARNINGS"
+            echo "========================================="
+            echo ""
+            echo "Files deployed but verification returned HTTP $HTTP_CODE"
+            echo ""
+            echo "Troubleshooting steps:"
+            echo "1. Wait a few minutes and try: http://52.66.71.133"
+            echo "2. Check nginx status:"
+            echo "   ssh ubuntu@52.66.71.133 'sudo systemctl status nginx'"
+            echo "3. Check nginx logs:"
+            echo "   ssh ubuntu@52.66.71.133 'sudo tail -100 /var/log/nginx/error.log'"
+            echo ""
+          fi
+          echo "========================================="
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/id_rsa
+          rm -f ${{ github.workspace }}/admin-panel.tar.gz
