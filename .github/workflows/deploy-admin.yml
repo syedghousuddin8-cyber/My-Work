@@ -1,0 +1,119 @@
+name: Deploy Admin Panel to Production
+
+on:
+  push:
+    branches:
+      - main
+      - claude/delivery-platform-ui-ux-design-01CrHMLTB7qjVhy3hxTKHhJ5
+    paths:
+      - 'delivery-platform/frontend/admin-dashboard/**'
+      - '.github/workflows/deploy-admin.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'delivery-platform/frontend/admin-dashboard/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          cd delivery-platform/frontend/admin-dashboard
+          npm ci
+
+      - name: Build admin panel
+        run: |
+          cd delivery-platform/frontend/admin-dashboard
+          npm run build
+        env:
+          VITE_API_URL: http://52.66.71.133/api/v1
+          VITE_WS_URL: ws://52.66.71.133/ws
+          VITE_ENV: production
+
+      - name: Create deployment package
+        run: |
+          cd delivery-platform/frontend/admin-dashboard/dist
+          tar -czf admin-panel.tar.gz .
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 52.66.71.133 >> ~/.ssh/known_hosts
+
+      - name: Transfer files to server
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            delivery-platform/frontend/admin-dashboard/dist/admin-panel.tar.gz \
+            ubuntu@52.66.71.133:/tmp/
+
+          scp -i ~/.ssh/deploy_key \
+            delivery-platform/deployment/production/nginx-admin.conf \
+            ubuntu@52.66.71.133:/tmp/
+
+      - name: Deploy on server
+        run: |
+          ssh -i ~/.ssh/deploy_key ubuntu@52.66.71.133 << 'ENDSSH'
+            set -e
+
+            # Install nginx if needed
+            if ! command -v nginx &> /dev/null; then
+              sudo apt-get update
+              sudo apt-get install -y nginx
+            fi
+
+            # Create directory
+            sudo mkdir -p /var/www/delivery-platform/admin-panel
+            sudo chown -R ubuntu:ubuntu /var/www/delivery-platform
+
+            # Backup current deployment
+            if [ -d /var/www/delivery-platform/admin-panel ]; then
+              sudo mv /var/www/delivery-platform/admin-panel /var/www/delivery-platform/admin-panel.backup.$(date +%Y%m%d-%H%M%S)
+            fi
+
+            # Extract new files
+            mkdir -p /var/www/delivery-platform/admin-panel
+            cd /var/www/delivery-platform/admin-panel
+            tar -xzf /tmp/admin-panel.tar.gz
+
+            # Configure nginx
+            sudo cp /tmp/nginx-admin.conf /etc/nginx/sites-available/admin-panel
+            sudo ln -sf /etc/nginx/sites-available/admin-panel /etc/nginx/sites-enabled/admin-panel
+            sudo rm -f /etc/nginx/sites-enabled/default
+
+            # Test and reload nginx
+            sudo nginx -t
+            sudo systemctl reload nginx
+
+            # Cleanup
+            rm -f /tmp/admin-panel.tar.gz /tmp/nginx-admin.conf
+
+            echo "✓ Admin panel deployed successfully"
+          ENDSSH
+
+      - name: Verify deployment
+        run: |
+          sleep 5
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://52.66.71.133)
+
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "304" ]; then
+            echo "✓ Deployment successful! Admin panel is live at http://52.66.71.133"
+          else
+            echo "✗ Deployment verification failed (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key
