@@ -67,10 +67,9 @@ async function refundOrder(id: string, amount?: number) {
 }
 
 export function useOrders(params: OrdersParams = {}) {
-  return useQuery({
+  return useQuery<OrdersResponse>({
     queryKey: ['orders', params],
     queryFn: () => fetchOrders(params),
-    keepPreviousData: true,
     refetchInterval: 10000, // Refetch every 10 seconds
   });
 }

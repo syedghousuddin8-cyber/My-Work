@@ -25,7 +25,10 @@ export default function UsersPage() {
 
   const queryClient = useQueryClient();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading } = useQuery<{
+    users: any[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+  }>({
     queryKey: ['users', { page, search, roleFilter, statusFilter }],
     queryFn: async () => {
       const params: any = { page, limit: 20 };
@@ -35,7 +38,6 @@ export default function UsersPage() {
       const response = await api.get('/api/v1/admin/users', { params });
       return response.data;
     },
-    keepPreviousData: true,
   });
 
   const blockUser = useMutation({
@@ -383,8 +385,8 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
             <button type="button" onClick={onClose} className="btn-secondary flex-1">
               Cancel
             </button>
-            <button type="submit" className="btn-primary flex-1" disabled={createUser.isLoading}>
-              {createUser.isLoading ? 'Creating...' : 'Create User'}
+            <button type="submit" className="btn-primary flex-1" disabled={createUser.isPending}>
+              {createUser.isPending ? 'Creating...' : 'Create User'}
             </button>
           </div>
         </form>
