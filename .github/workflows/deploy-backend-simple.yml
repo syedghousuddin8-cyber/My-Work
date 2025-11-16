@@ -110,7 +110,7 @@ jobs:
           # Create simple authentication server directly
           echo "Creating authentication server..."
 
-            cat > /var/www/delivery-platform/auth-server.js << 'AUTHSERVER'
+          cat > /var/www/delivery-platform/auth-server.js << 'AUTHSERVER'
           const express = require('express');
           const cors = require('cors');
           const app = express();
@@ -212,13 +212,13 @@ jobs:
           });
           AUTHSERVER
 
-            # Install express and cors
-            cd /var/www/delivery-platform
-            npm init -y
-            npm install express cors
+          # Install express and cors
+          cd /var/www/delivery-platform
+          npm init -y
+          npm install express cors
 
-            # Start with PM2
-            pm2 start auth-server.js --name auth-server
+          # Start with PM2
+          pm2 start auth-server.js --name auth-server
 
           # Save PM2 configuration
           pm2 save
