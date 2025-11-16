@@ -106,8 +106,14 @@ jobs:
           mkdir -p /var/www/delivery-platform/backend
           cd /var/www/delivery-platform
 
-          # Stop existing services
+          # Stop existing services and clean up
           pm2 delete all || true
+          pm2 kill || true
+
+          # Remove old auth server file
+          rm -f /var/www/delivery-platform/auth-server.js
+          rm -f /var/www/delivery-platform/package.json
+          rm -rf /var/www/delivery-platform/node_modules
 
           # Create simple authentication server directly
           echo "Creating authentication server..."
@@ -214,12 +220,21 @@ jobs:
           });
           AUTHSERVER
 
+          # Verify file was created
+          echo "Verifying auth-server.js was created..."
+          ls -lh /var/www/delivery-platform/auth-server.js
+          echo "File size: $(wc -l < /var/www/delivery-platform/auth-server.js) lines"
+          echo ""
+          echo "Checking console.log line (should use + not backticks):"
+          grep -n "console.log" /var/www/delivery-platform/auth-server.js || echo "No console.log found"
+          echo ""
+
           # Install express and cors
           cd /var/www/delivery-platform
           npm init -y
           npm install express cors
 
-          # Start with PM2
+          # Start with PM2 (fresh start since we killed PM2 earlier)
           pm2 start auth-server.js --name auth-server
 
           # Save PM2 configuration
