@@ -25,7 +25,17 @@ interface VendorsParams {
   search?: string;
 }
 
-async function fetchVendors(params: VendorsParams) {
+interface VendorsResponse {
+  vendors: Vendor[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+async function fetchVendors(params: VendorsParams): Promise<VendorsResponse> {
   const response = await api.get('/api/v1/vendors', { params });
   return response.data;
 }
@@ -46,10 +56,9 @@ async function blockVendor(id: string, reason: string) {
 }
 
 export function useVendors(params: VendorsParams = {}) {
-  return useQuery({
+  return useQuery<VendorsResponse>({
     queryKey: ['vendors', params],
     queryFn: () => fetchVendors(params),
-    keepPreviousData: true,
   });
 }
 

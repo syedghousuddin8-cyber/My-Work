@@ -62,10 +62,9 @@ async function verifyDocuments(id: string) {
 }
 
 export function useDrivers(params: DriversParams = {}) {
-  return useQuery({
+  return useQuery<DriversResponse>({
     queryKey: ['drivers', params],
     queryFn: () => fetchDrivers(params),
-    keepPreviousData: true,
   });
 }
 
