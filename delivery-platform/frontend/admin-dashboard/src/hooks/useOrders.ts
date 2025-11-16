@@ -36,7 +36,17 @@ interface OrdersParams {
   endDate?: string;
 }
 
-async function fetchOrders(params: OrdersParams) {
+interface OrdersResponse {
+  orders: Order[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+async function fetchOrders(params: OrdersParams): Promise<OrdersResponse> {
   const response = await api.get('/api/v1/admin/orders', { params });
   return response.data;
 }

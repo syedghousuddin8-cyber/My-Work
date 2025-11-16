@@ -26,7 +26,17 @@ interface DriversParams {
   search?: string;
 }
 
-async function fetchDrivers(params: DriversParams) {
+interface DriversResponse {
+  drivers: Driver[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+async function fetchDrivers(params: DriversParams): Promise<DriversResponse> {
   const response = await api.get('/api/v1/drivers', { params });
   return response.data;
 }
