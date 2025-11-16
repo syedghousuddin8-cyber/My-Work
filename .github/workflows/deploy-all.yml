@@ -1,0 +1,259 @@
+name: Deploy Complete Platform
+
+on:
+  workflow_dispatch:  # Manual trigger only
+    inputs:
+      deploy_admin:
+        description: 'Deploy Admin Panel'
+        required: true
+        default: 'true'
+        type: boolean
+      deploy_backend:
+        description: 'Deploy Backend Services'
+        required: true
+        default: 'true'
+        type: boolean
+      deploy_monitoring:
+        description: 'Deploy Monitoring Stack'
+        required: true
+        default: 'false'
+        type: boolean
+      setup_infrastructure:
+        description: 'Setup Server Infrastructure'
+        required: true
+        default: 'false'
+        type: boolean
+
+jobs:
+  setup-infrastructure:
+    if: ${{ github.event.inputs.setup_infrastructure == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 52.66.71.133 >> ~/.ssh/known_hosts
+
+      - name: Install server infrastructure
+        run: |
+          ssh -i ~/.ssh/deploy_key ubuntu@52.66.71.133 << 'ENDSSH'
+            set -e
+
+            echo "Updating system packages..."
+            sudo apt-get update
+
+            # Install Node.js 20
+            if ! command -v node &> /dev/null; then
+              echo "Installing Node.js..."
+              curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+            fi
+
+            # Install PM2
+            if ! command -v pm2 &> /dev/null; then
+              echo "Installing PM2..."
+              sudo npm install -g pm2
+            fi
+
+            # Install PostgreSQL
+            if ! command -v psql &> /dev/null; then
+              echo "Installing PostgreSQL..."
+              sudo apt-get install -y postgresql postgresql-contrib
+            fi
+
+            # Install Redis
+            if ! command -v redis-cli &> /dev/null; then
+              echo "Installing Redis..."
+              sudo apt-get install -y redis-server
+              sudo systemctl enable redis-server
+              sudo systemctl start redis-server
+            fi
+
+            # Install Docker
+            if ! command -v docker &> /dev/null; then
+              echo "Installing Docker..."
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sudo sh get-docker.sh
+              sudo usermod -aG docker ubuntu
+              rm get-docker.sh
+            fi
+
+            # Install Docker Compose
+            if ! command -v docker-compose &> /dev/null; then
+              echo "Installing Docker Compose..."
+              sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+              sudo chmod +x /usr/local/bin/docker-compose
+            fi
+
+            # Setup PostgreSQL database
+            sudo -u postgres psql -c "SELECT 1 FROM pg_user WHERE usename = 'delivery_user'" | grep -q 1 || \
+            sudo -u postgres psql << EOF
+            CREATE USER delivery_user WITH PASSWORD 'DeliveryPlatform2024!';
+            CREATE DATABASE delivery_platform OWNER delivery_user;
+            GRANT ALL PRIVILEGES ON DATABASE delivery_platform TO delivery_user;
+          EOF
+
+            echo "✓ Infrastructure setup completed"
+          ENDSSH
+
+  deploy-admin:
+    if: ${{ github.event.inputs.deploy_admin == 'true' }}
+    needs: [setup-infrastructure]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Build admin panel
+        run: |
+          cd delivery-platform/frontend/admin-dashboard
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: http://52.66.71.133/api/v1
+          VITE_WS_URL: ws://52.66.71.133/ws
+          VITE_ENV: production
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 52.66.71.133 >> ~/.ssh/known_hosts
+
+      - name: Deploy admin panel
+        run: |
+          cd delivery-platform/frontend/admin-dashboard/dist
+          tar -czf admin-panel.tar.gz .
+          scp -i ~/.ssh/deploy_key admin-panel.tar.gz ubuntu@52.66.71.133:/tmp/
+          scp -i ~/.ssh/deploy_key ../../deployment/production/nginx-admin.conf ubuntu@52.66.71.133:/tmp/
+
+          ssh -i ~/.ssh/deploy_key ubuntu@52.66.71.133 << 'ENDSSH'
+            sudo mkdir -p /var/www/delivery-platform/admin-panel
+            sudo chown -R ubuntu:ubuntu /var/www/delivery-platform
+            cd /var/www/delivery-platform/admin-panel
+            tar -xzf /tmp/admin-panel.tar.gz
+
+            sudo apt-get install -y nginx
+            sudo cp /tmp/nginx-admin.conf /etc/nginx/sites-available/admin-panel
+            sudo ln -sf /etc/nginx/sites-available/admin-panel /etc/nginx/sites-enabled/admin-panel
+            sudo rm -f /etc/nginx/sites-enabled/default
+            sudo nginx -t && sudo systemctl reload nginx
+            rm -f /tmp/admin-panel.tar.gz /tmp/nginx-admin.conf
+          ENDSSH
+
+  deploy-backend:
+    if: ${{ github.event.inputs.deploy_backend == 'true' }}
+    needs: [setup-infrastructure]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 52.66.71.133 >> ~/.ssh/known_hosts
+
+      - name: Deploy backend
+        run: |
+          cd delivery-platform/backend
+          tar -czf backend.tar.gz --exclude='node_modules' --exclude='dist' services/ ai-services/ || true
+          scp -i ~/.ssh/deploy_key backend.tar.gz ubuntu@52.66.71.133:/tmp/
+          scp -i ~/.ssh/deploy_key ../deployment/production/ecosystem.config.js ubuntu@52.66.71.133:/tmp/
+
+          ssh -i ~/.ssh/deploy_key ubuntu@52.66.71.133 << 'ENDSSH'
+            mkdir -p /var/www/delivery-platform/backend
+            cd /var/www/delivery-platform/backend
+            tar -xzf /tmp/backend.tar.gz
+
+            for service in services/*/; do
+              if [ -f "$service/package.json" ]; then
+                cd "$service"
+                npm install --production 2>/dev/null || true
+                npm run build 2>/dev/null || true
+                cd /var/www/delivery-platform/backend
+              fi
+            done
+
+            cp /tmp/ecosystem.config.js /var/www/delivery-platform/
+            cd /var/www/delivery-platform
+            pm2 restart ecosystem.config.js || pm2 start ecosystem.config.js
+            pm2 save
+          ENDSSH
+
+  deploy-monitoring:
+    if: ${{ github.event.inputs.deploy_monitoring == 'true' }}
+    needs: [setup-infrastructure]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H 52.66.71.133 >> ~/.ssh/known_hosts
+
+      - name: Deploy monitoring
+        run: |
+          cd delivery-platform/monitoring
+          tar -czf monitoring.tar.gz .
+          scp -i ~/.ssh/deploy_key monitoring.tar.gz ubuntu@52.66.71.133:/tmp/
+
+          ssh -i ~/.ssh/deploy_key ubuntu@52.66.71.133 << 'ENDSSH'
+            mkdir -p /var/www/delivery-platform/monitoring
+            cd /var/www/delivery-platform/monitoring
+            tar -xzf /tmp/monitoring.tar.gz
+            mkdir -p prometheus/data grafana/data alertmanager/data
+            chmod -R 777 prometheus/data grafana/data alertmanager/data
+
+            if [ -f docker-compose.yml ]; then
+              docker-compose down || true
+              docker-compose up -d
+            fi
+          ENDSSH
+
+  verify:
+    needs: [deploy-admin, deploy-backend, deploy-monitoring]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify deployment
+        run: |
+          echo "Verifying deployment..."
+
+          # Check admin panel
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://52.66.71.133)
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "304" ]; then
+            echo "✓ Admin panel is live: http://52.66.71.133"
+          else
+            echo "✗ Admin panel check failed (HTTP $HTTP_CODE)"
+          fi
+
+          # Check Grafana
+          GRAFANA_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://52.66.71.133:3000)
+          if [ "$GRAFANA_CODE" = "200" ]; then
+            echo "✓ Grafana is live: http://52.66.71.133:3000"
+          else
+            echo "⚠ Grafana not accessible"
+          fi
+
+          echo ""
+          echo "Deployment complete!"
+          echo "Admin Panel: http://52.66.71.133"
+          echo "Login: admin@delivery-platform.com / admin123"
