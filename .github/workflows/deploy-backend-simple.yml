@@ -102,81 +102,13 @@ jobs:
 
           # Create backend directory
           mkdir -p /var/www/delivery-platform/backend
-          cd /var/www/delivery-platform/backend
-
-          # Extract services
-          tar -xzf /tmp/backend-services.tar.gz
-
-          # Create .env file
-          cat > /var/www/delivery-platform/.env << 'EOF'
-          NODE_ENV=production
-          PORT=3001
-          DATABASE_URL=postgresql://delivery_user:DeliveryPlatform2024!@localhost:5432/delivery_platform
-          REDIS_URL=redis://localhost:6379
-          JWT_SECRET=your-super-secret-jwt-key-change-in-production
-          JWT_EXPIRES_IN=7d
-          BCRYPT_ROUNDS=10
-          CORS_ORIGIN=http://52.66.71.133
-          EOF
-
-          # Install dependencies and build user service (for authentication)
-          if [ -d "services/user-service" ]; then
-            echo "Building user service..."
-            cd services/user-service
-            npm install --production
-
-            # Create basic database schema
-            cat > init-db.sql << 'SQLINIT'
-          CREATE TABLE IF NOT EXISTS users (
-            id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-            name VARCHAR(255) NOT NULL,
-            email VARCHAR(255) UNIQUE NOT NULL,
-            password VARCHAR(255) NOT NULL,
-            role VARCHAR(50) DEFAULT 'customer',
-            status VARCHAR(50) DEFAULT 'active',
-            phone VARCHAR(50),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-
-          -- Insert default admin user (password: admin123)
-          INSERT INTO users (name, email, password, role, status)
-          VALUES (
-            'Admin User',
-            'admin@delivery-platform.com',
-            '$2b$10$rKJ5VqLKPJZ8EqVZYvN4sOYxQJXH5vKZGp8tLqN4yZH5vN4sOYxQJ',
-            'admin',
-            'active'
-          ) ON CONFLICT (email) DO NOTHING;
-          SQLINIT
-
-            # Run database initialization
-            PGPASSWORD=DeliveryPlatform2024! psql -h localhost -U delivery_user -d delivery_platform -f init-db.sql || true
-
-            # Build if TypeScript exists
-            if [ -f "tsconfig.json" ]; then
-              npm run build || echo "Build skipped"
-            fi
-
-            cd /var/www/delivery-platform/backend
-          fi
-
-          # Copy PM2 config
-          cp /tmp/ecosystem.config.js /var/www/delivery-platform/
+          cd /var/www/delivery-platform
 
           # Stop existing services
           pm2 delete all || true
 
-          # Start user service with PM2
-          cd /var/www/delivery-platform
-          pm2 start ecosystem.config.js --only user-service || \
-          pm2 start services/user-service/dist/index.js --name user-service --env production || \
-          pm2 start services/user-service/src/index.ts --name user-service --interpreter ts-node || \
-          echo "Could not start user service with PM2, will create simple Express server"
-
-          # If PM2 start failed, create a simple auth server
-          if ! pm2 list | grep -q "user-service.*online"; then
-            echo "Creating simple authentication server..."
+          # Create simple authentication server directly
+          echo "Creating authentication server..."
 
             cat > /var/www/delivery-platform/auth-server.js << 'AUTHSERVER'
           const express = require('express');
@@ -287,7 +219,6 @@ jobs:
 
             # Start with PM2
             pm2 start auth-server.js --name auth-server
-          fi
 
           # Save PM2 configuration
           pm2 save
